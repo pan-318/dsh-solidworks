@@ -31,7 +31,7 @@
 | `solidworks_assembly` | **装配**：插入零部件、平移定位、平面配合（重合/距离/平行/垂直/同轴/相切/角度）、固定/浮动 |
 | `solidworks_drawing` | **工程图**：从零件/装配体生成标准视图（前/上/右/左/后/下/等轴测）、插入模型尺寸、列出视图 |
 | `solidworks_documents` | 列出已打开的文档、活动文档、未保存状态 |
-| `solidworks_inspect` | 配置、材质、质量属性、包围盒、实体/曲面实体数、特征树、零部件、图纸、自定义属性；`edges=true` 列出编号边 |
+| `solidworks_inspect` | 配置、材质、质量属性、包围盒、实体/曲面实体数、特征树、零部件、图纸、自定义属性；`edges=true` 列出编号边（直线给出端点，圆形边给出圆心、半径、周长） |
 | `solidworks_properties` | 读取 / 写入 / 删除自定义属性（文档级或指定配置） |
 | `solidworks_export` | 导出副本：pdf / step / iges / stl / x_t / x_b / 3mf / png / jpg / tif；dxf、dwg 需从工程图导出 |
 | `solidworks_capture` | 截图当前图形区并作为图片返回给模型（可核对模型外观） |
@@ -107,7 +107,7 @@
 ## 安全设计
 
 - 零件、装配体、工程图都可以操作；**只读文档拒绝改动**。
-- 已经保存到磁盘的零件/装配体必须传 `allowEdit: true`，否则拒绝；允许时先把原文件复制到 `%LOCALAPPDATA%\dsh-solidworks\backups` 并在结果里返回备份路径。
+- 已经保存到磁盘的零件/装配体/工程图，**改几何、改属性、删属性**都必须传 `allowEdit: true`，否则拒绝；允许时先把原文件复制到 `%LOCALAPPDATA%\dsh-solidworks\backups` 并在结果里返回备份路径。
 - 所有改动**不自动保存**，需要显式调用 `solidworks_save`；关闭文档时默认拒绝丢弃未保存修改。
 - 每一步失败会指出第几步、哪个特征失败；预览截图默认隐藏基准面和草图，看不清模型时可以再用 `solidworks_capture`。
 
@@ -151,5 +151,6 @@
 - SOLIDWORKS 是 Dassault Systèmes SolidWorks Corporation 的商标。本项目是**非官方**社区项目，与 Dassault Systèmes 无任何关联，也未获其背书。
 - 插件通过公开的 COM API 操作你本机已安装并获授权的 SolidWorks；使用前请确认你的 SolidWorks 许可允许这种自动化方式。
 - 自动化会修改打开的文档。插件默认不保存，修改已保存文件前会先备份，但仍建议在重要数据上先手动备份并自行承担使用风险。
+
 
 

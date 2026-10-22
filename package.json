@@ -1,6 +1,6 @@
 {
     "name":  "@local/dsh-solidworks",
-    "version":  "0.4.0",
+    "version":  "0.4.1",
     "private":  true,
     "type":  "module",
     "description":  "SolidWorks for DeepSeek Harness: model parts, build assemblies, create drawings, inspect, export and photograph SOLIDWORKS documents from the chat.",

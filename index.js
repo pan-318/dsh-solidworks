@@ -1,4 +1,4 @@
-﻿import z from "@deepseek-ai/schemastery";
+import z from "@deepseek-ai/schemastery";
 import { readFile, rm } from "node:fs/promises";
 import { basename } from "node:path";
 import { SolidWorksDriver } from "./lib/runner.js";
@@ -247,13 +247,17 @@ export function apply(ctx, config = {}) {
     {
       name: "solidworks_properties",
       description:
-        "Read or change the custom properties (the metadata tables: part number, description, material, revision, ...) of an open SolidWorks document, for the document or for one configuration. action=get returns them all; action=set writes the given name/value pairs; action=delete removes the named ones.",
+        "Read or change the custom properties (the metadata tables: part number, description, material, revision, ...) of an open SolidWorks document, for the document or for one configuration. action=get returns them all; action=set writes the given name/value pairs; action=delete removes the named ones. Changing a saved file needs allowEdit=true and is backed up first.",
       parameters: {
         type: "object",
         properties: {
           action: { type: "string", enum: ["get", "set", "delete"], description: "What to do. Default: get." },
           path: DOC_PATH,
           title: DOC_TITLE,
+          allowEdit: {
+            type: "boolean",
+            description: "Required to change a document that is already saved to disk: the original file is backed up first.",
+          },
           configuration: {
             type: "string",
             description: "Configuration name for configuration-specific properties; omit for the document level.",
@@ -389,14 +393,17 @@ export function apply(ctx, config = {}) {
         );
         const images = [];
         if (data.previewPng) {
-          const bytes = await readFile(data.previewPng);
-          const attachment = await ctx.attachments.saveImage({
-            data: bytes,
-            mediaType: "image/png",
-            name: basename(data.previewPng),
-          });
-          await rm(data.previewPng, { force: true }).catch(() => {});
-          images.push(toJson(attachment));
+          try {
+            const bytes = await readFile(data.previewPng);
+            const attachment = await ctx.attachments.saveImage({
+              data: bytes,
+              mediaType: "image/png",
+              name: basename(data.previewPng),
+            });
+            images.push(toJson(attachment));
+          } finally {
+            await rm(data.previewPng, { force: true }).catch(() => {});
+          }
         }
         return { text: render.modeled(data), images };
       },
@@ -461,14 +468,17 @@ export function apply(ctx, config = {}) {
         );
         const images = [];
         if (data.previewPng) {
-          const bytes = await readFile(data.previewPng);
-          const attachment = await ctx.attachments.saveImage({
-            data: bytes,
-            mediaType: "image/png",
-            name: basename(data.previewPng),
-          });
-          await rm(data.previewPng, { force: true }).catch(() => {});
-          images.push(toJson(attachment));
+          try {
+            const bytes = await readFile(data.previewPng);
+            const attachment = await ctx.attachments.saveImage({
+              data: bytes,
+              mediaType: "image/png",
+              name: basename(data.previewPng),
+            });
+            images.push(toJson(attachment));
+          } finally {
+            await rm(data.previewPng, { force: true }).catch(() => {});
+          }
         }
         return { text: render.assembly(data), images };
       },
@@ -562,14 +572,17 @@ export function apply(ctx, config = {}) {
           },
           exec,
         );
-        const bytes = await readFile(data.png);
-        const attachment = await ctx.attachments.saveImage({
-          data: bytes,
-          mediaType: "image/png",
-          name: basename(data.png),
-        });
-        await rm(data.png, { force: true }).catch(() => {});
-        return { text: render.captured(data), images: [toJson(attachment)] };
+        try {
+          const bytes = await readFile(data.png);
+          const attachment = await ctx.attachments.saveImage({
+            data: bytes,
+            mediaType: "image/png",
+            name: basename(data.png),
+          });
+          return { text: render.captured(data), images: [toJson(attachment)] };
+        } finally {
+          await rm(data.png, { force: true }).catch(() => {});
+        }
       },
     },
     {
@@ -612,11 +625,3 @@ export function apply(ctx, config = {}) {
     ctx.effect(() => ctx.tools.register(tool), `solidworks: tool ${tool.name}`);
   }
 }
-
-
-
-
-
-
-
-

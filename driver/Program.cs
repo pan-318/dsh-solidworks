@@ -1,4 +1,4 @@
-﻿// DSH SolidWorks driver: one stateless COM automation run per invocation.
+// DSH SolidWorks driver: one stateless COM automation run per invocation.
 // Reads a JSON request, talks to the running (or freshly started) SolidWorks
 // through its early-bound interop API, and writes a JSON response.
 //
@@ -491,8 +491,8 @@ namespace DshSolidWorks
                 if (found == null)
                 {
                     throw new SwFailure("not_open",
-                        "Successfully opened documents:\n" + DescribeOpenDocs(app) +
-                        "\n'" + path + "' is not open. Use solidworks_open first.");
+                        "'" + path + "' is not open in SolidWorks. Open documents:\n" + DescribeOpenDocs(app) +
+                        "\nUse solidworks_open to open it first.");
                 }
             }
             else if (!string.IsNullOrEmpty(title))
@@ -640,18 +640,49 @@ namespace DshSolidWorks
 
                 if (template != null)
                 {
+                    // Validate saveAs before creating a window, so a bad path does not leave an
+                    // unsaved document behind.
+                    string target = null;
+                    if (!string.IsNullOrEmpty(saveAs))
+                    {
+                        target = OutputPath(saveAs, null);
+                        string extension = (Path.GetExtension(target) ?? "").ToLowerInvariant();
+                        if (string.IsNullOrEmpty(extension))
+                        {
+                            target = target + NativeExtension(type);
+                        }
+                        else if (!IsNativeExtension(target))
+                        {
+                            throw new SwFailure("bad_extension",
+                                "'" + Path.GetFileName(target) + "' is not a SolidWorks file extension. " +
+                                "saveAs writes .SLDPRT, .SLDASM or .SLDDRW; use solidworks_export for other formats.");
+                        }
+                        else if (TypeOfPath(target) != type)
+                        {
+                            throw new SwFailure("type_mismatch",
+                                "'" + Path.GetFileName(target) + "' does not match a " + TypeName(type) +
+                                " document; it needs " + NativeExtension(type) + ".");
+                        }
+                    }
+
                     model = app.NewDocument(template, 0, 0, 0) as ModelDoc2;
                     created = true;
                     if (model == null)
                         throw new SwFailure("new_failed", "SolidWorks did not create a new " + kind + " document.");
-                    if (!string.IsNullOrEmpty(saveAs))
+                    if (target != null)
                     {
-                        // The document type comes from kind; saveAs only names the file.
+                        string targetFolder = Path.GetDirectoryName(target);
+                        if (!string.IsNullOrEmpty(targetFolder)) Directory.CreateDirectory(targetFolder);
                         int e2 = 0, w2 = 0;
-                        model.Extension.SaveAs(saveAs, 0, 1, null, ref e2, ref w2);
-                        if (!File.Exists(saveAs))
-                            throw new SwFailure("save_failed", "Could not save the new document to '" + saveAs + "' (error " + e2 + ").");
-                        path = saveAs;
+                        model.Extension.SaveAs(target, 0, 1, null, ref e2, ref w2);
+                        if (!File.Exists(target))
+                        {
+                            // Do not keep an unsaved document around when its file could not be written.
+                            try { app.CloseDoc(model.GetTitle()); } catch { }
+                            throw new SwFailure("save_failed",
+                                "Could not save the new document to '" + target + "': " + DescribeSaveError(e2) + " (error " + e2 + ").");
+                        }
+                        path = target;
                     }
                 }
             }
@@ -858,6 +889,34 @@ namespace DshSolidWorks
                             double dz = p2[2] - p1[2];
                             entry["chord"] = Num(Math.Sqrt(dx * dx + dy * dy + dz * dz) * 1000);
                         }
+
+                        // Circular edges have no start or end vertex in SolidWorks; describe the circle instead
+                        // so the edge is still identifiable in the list.
+                        if (p1 == null || p2 == null)
+                        {
+                            Curve curve = edge.GetCurve() as Curve;
+                            if (curve != null && curve.IsCircle())
+                            {
+                                // CircleParams holds [centerX, centerY, centerZ, axisX, axisY, axisZ, radius].
+                                entry["circle"] = true;
+                                double[] circle = curve.CircleParams as double[];
+                                if (circle != null && circle.Length >= 7)
+                                {
+                                    entry["center"] = new object[] { Num(circle[0] * 1000), Num(circle[1] * 1000), Num(circle[2] * 1000) };
+                                    entry["radius"] = Num(circle[6] * 1000);
+                                    double start = 0;
+                                    double end = 0;
+                                    bool closed = false;
+                                    bool periodic = false;
+                                    try
+                                    {
+                                        curve.GetEndParams(out start, out end, out closed, out periodic);
+                                        entry["length"] = Num(curve.GetLength3(start, end) * 1000);
+                                    }
+                                    catch { }
+                                }
+                            }
+                        }
                     }
                     catch { }
                     edgeList.Add(entry);
@@ -958,12 +1017,15 @@ namespace DshSolidWorks
             if (manager == null)
                 throw new SwFailure("unsupported", "This document has no custom property manager.");
 
+            var notes = new List<string>();
+            string backup = null;
             int changed = 0;
             if (action == "set")
             {
                 Dictionary<string, object> values = Obj("properties");
                 if (values == null || values.Count == 0)
                     throw new SwFailure("bad_request", "Pass a properties object such as {\"PartNumber\": \"A-001\"}.");
+                backup = GuardForEdit(model, notes, "Changing custom properties");
                 foreach (KeyValuePair<string, object> pair in values)
                 {
                     if (string.IsNullOrEmpty(pair.Key)) continue;
@@ -983,6 +1045,7 @@ namespace DshSolidWorks
                     if (!string.IsNullOrEmpty(single)) names.Add(single);
                 }
                 if (names.Count == 0) throw new SwFailure("bad_request", "Pass the property names to delete.");
+                backup = GuardForEdit(model, notes, "Deleting custom properties");
                 foreach (string name in names)
                 {
                     manager.Delete2(name);
@@ -995,7 +1058,9 @@ namespace DshSolidWorks
                 { "doc", DocInfo(model, App(false).ActiveDoc as ModelDoc2) },
                 { "configuration", configuration ?? "" },
                 { "properties", ReadProperties(model, configuration) },
-                { "changed", changed }
+                { "changed", changed },
+                { "backup", backup },
+                { "notes", notes }
             };
         }
 
@@ -1217,20 +1282,33 @@ namespace DshSolidWorks
 
             if (action == "close_all")
             {
+                // Check every document first: closing the clean ones and then failing on a dirty
+                // one would leave the caller with a half-closed SolidWorks.
+                ModelDoc2[] all = OpenDocs(app);
+                if (!Bool("force", false))
+                {
+                    var dirty = new List<string>();
+                    foreach (ModelDoc2 model in all)
+                    {
+                        bool changed = false;
+                        try { changed = model.GetSaveFlag(); } catch { }
+                        if (changed) dirty.Add(model.GetTitle());
+                    }
+                    if (dirty.Count > 0)
+                    {
+                        throw new SwFailure("unsaved_changes",
+                            "These documents still have unsaved changes: " + string.Join(", ", dirty.ToArray()) +
+                            ". Save them first, or pass force=true to discard the changes.");
+                    }
+                }
+
                 var closed = new List<object>();
-                foreach (ModelDoc2 model in OpenDocs(app))
+                foreach (ModelDoc2 model in all)
                 {
                     string title = model.GetTitle();
-                    bool dirty = model.GetSaveFlag();
-                    if (dirty)
-                    {
-                        if (!Bool("force", false))
-                        {
-                            throw new SwFailure("unsaved_changes",
-                                "'" + title + "' has unsaved changes. Save it first, or pass force=true to discard them.");
-                        }
-                        try { model.SetSaveFlag(); } catch { }
-                    }
+                    bool changed = false;
+                    try { changed = model.GetSaveFlag(); } catch { }
+                    if (changed) { try { model.SetSaveFlag(); } catch { } }
                     app.CloseDoc(title);
                     closed.Add(title);
                 }
@@ -2264,6 +2342,26 @@ namespace DshSolidWorks
             if (string.IsNullOrEmpty(modelPath) || !File.Exists(modelPath))
                 throw new SwFailure("not_found", "Pass model with the path of an existing part or assembly file.");
 
+            // Validate the requested views before a drawing window is created, so a typo
+            // does not leave an empty drawing open behind.
+            string[] knownViews = { "front", "top", "right", "left", "back", "bottom", "iso" };
+            var wantedNames = new List<string>();
+            object[] rawViews = request.ContainsKey("views") ? AsArray(request["views"]) : null;
+            if (rawViews != null)
+            {
+                foreach (object item in rawViews)
+                {
+                    string name = Convert.ToString(item, CultureInfo.InvariantCulture);
+                    if (string.IsNullOrEmpty(name)) continue;
+                    string lower = name.Trim().ToLowerInvariant();
+                    if (Array.IndexOf(knownViews, lower) < 0)
+                        throw new SwFailure("bad_request",
+                            "Unknown view '" + name + "'. Use front, top, right, left, back, bottom or iso.");
+                    if (!wantedNames.Contains(lower)) wantedNames.Add(lower);
+                }
+            }
+            if (wantedNames.Count == 0) wantedNames.AddRange(new[] { "front", "top", "right", "iso" });
+
             string template = Str("template", null);
             if (string.IsNullOrEmpty(template))
                 template = App(false).GetUserPreferenceStringValue((int)swUserPreferenceStringValue_e.swDefaultTemplateDrawing);
@@ -2289,18 +2387,6 @@ namespace DshSolidWorks
                 if (width > 0.05 && height > 0.05) { sheetWidth = width; sheetHeight = height; }
             }
 
-            var wantedNames = new List<string>();
-            object[] rawViews = request.ContainsKey("views") ? AsArray(request["views"]) : null;
-            if (rawViews != null)
-            {
-                foreach (object item in rawViews)
-                {
-                    string name = Convert.ToString(item, CultureInfo.InvariantCulture);
-                    if (!string.IsNullOrEmpty(name)) wantedNames.Add(name.ToLowerInvariant());
-                }
-            }
-            if (wantedNames.Count == 0) wantedNames.AddRange(new[] { "front", "top", "right", "iso" });
-
             var positions = new Dictionary<string, double[]>
             {
                 { "front", new[] { 0.30, 0.45 } },
@@ -2315,8 +2401,7 @@ namespace DshSolidWorks
             var created = new List<object>();
             foreach (string view in wantedNames)
             {
-                double[] position;
-                if (!positions.TryGetValue(view, out position)) position = new[] { 0.5, 0.5 };
+                double[] position = positions[view];
                 View createdView = null;
                 foreach (string candidate in DrawingViewNames(view))
                 {
@@ -2325,7 +2410,8 @@ namespace DshSolidWorks
                 }
                 if (createdView == null)
                     throw new SwFailure("view_failed",
-                        "Could not create the '" + view + "' view. Use front, top, right, left, back, bottom or iso.");
+                        "SolidWorks could not create the '" + view + "' view of '" + Path.GetFileName(modelPath) + "'. " +
+                        "Check that the file opens in this SolidWorks version.");
                 created.Add(new Dictionary<string, object> { { "name", createdView.GetName2() }, { "view", view } });
             }
 
@@ -2339,6 +2425,22 @@ namespace DshSolidWorks
                 }
                 catch { }
             }
+
+            // A drawing created here is a new window; say so when other unsaved drawings are still open,
+            // otherwise it looks as if the previous one was replaced.
+            var unsaved = new List<string>();
+            foreach (ModelDoc2 open in OpenDocs(App(false)))
+            {
+                if (open == null) continue;
+                string openTitle = open.GetTitle();
+                if (string.Equals(openTitle, doc.GetTitle(), StringComparison.OrdinalIgnoreCase)) continue;
+                bool dirty = false;
+                try { dirty = open.GetSaveFlag(); } catch { }
+                if (dirty) unsaved.Add(openTitle);
+            }
+            if (unsaved.Count > 0)
+                notes.Add("This is a new drawing window. These documents still have unsaved changes: " +
+                          string.Join(", ", unsaved.ToArray()) + ". Save or close them with solidworks_save.");
 
             doc.ForceRebuild3(false);
             return new Dictionary<string, object>
@@ -2555,6 +2657,8 @@ namespace DshSolidWorks
         }
     }
 }
+
+
 
 
 
