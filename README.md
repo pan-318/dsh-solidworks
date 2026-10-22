@@ -33,7 +33,7 @@
 | `solidworks_documents` | 列出已打开的文档、活动文档、未保存状态 |
 | `solidworks_inspect` | 配置、材质、质量属性、包围盒、实体/曲面实体数、特征树、零部件、图纸、自定义属性；`edges=true` 列出编号边 |
 | `solidworks_properties` | 读取 / 写入 / 删除自定义属性（文档级或指定配置） |
-| `solidworks_export` | 导出 pdf / step / iges / stl / dxf / dwg / x_t / x_b / 3mf，或 png/jpg/tif 图片 |
+| `solidworks_export` | 导出副本：pdf / step / iges / stl / x_t / x_b / 3mf / png / jpg / tif；dxf、dwg 需从工程图导出 |
 | `solidworks_capture` | 截图当前图形区并作为图片返回给模型（可核对模型外观） |
 | `solidworks_save` | 保存、另存为、关闭（默认拒绝丢弃未保存修改） |
 
@@ -97,6 +97,13 @@
 - `action: "views"` 列出当前工程图的视图。
 - 生成后用 `solidworks_save` 保存为 `.SLDDRW`，再用 `solidworks_export` 导出 PDF。
 
+## 保存与导出规则
+
+- **新建文档没有文件名**：`action=save` 会失败并提示改用 `action=save_as`，必须给 `out`。
+- `save_as` 只写 `.SLDPRT` / `.SLDASM` / `.SLDDRW`，且扩展名必须与文档类型一致；漏写扩展名会自动补上，写错（比如给零件存 `.SLDASM`，或给 `save_as` 传 `.step`）会直接报错。
+- **导出其它格式请用 `solidworks_export`**：它总是写副本（`swSaveAsOptions_Copy`），不会把打开的文档改成导出文件；`format` 与 `out` 扩展名不一致会被拒绝，避免 SolidWorks 把零件“另存成” `.SLDPRT` 而改掉文档路径。
+- 相对路径按**文档所在目录**解析；文档还没保存时按“文档”文件夹解析，不会落到插件源码目录。
+
 ## 安全设计
 
 - 零件、装配体、工程图都可以操作；**只读文档拒绝改动**。
@@ -144,4 +151,5 @@
 - SOLIDWORKS 是 Dassault Systèmes SolidWorks Corporation 的商标。本项目是**非官方**社区项目，与 Dassault Systèmes 无任何关联，也未获其背书。
 - 插件通过公开的 COM API 操作你本机已安装并获授权的 SolidWorks；使用前请确认你的 SolidWorks 许可允许这种自动化方式。
 - 自动化会修改打开的文档。插件默认不保存，修改已保存文件前会先备份，但仍建议在重要数据上先手动备份并自行承担使用风险。
+
 

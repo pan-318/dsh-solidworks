@@ -507,14 +507,14 @@ export function apply(ctx, config = {}) {
     {
       name: "solidworks_export",
       description:
-        "Export an open SolidWorks document to a file: pdf, step/stp, iges/igs, stl, dxf, dwg, x_t, x_b, 3mf for geometry, or png/jpg/tif for a picture of the current graphics view. Writes next to the document when out is omitted. Only exports the file; the model itself is not changed.",
+        "Export an open SolidWorks document to a file: pdf, step/stp, iges/igs, stl, x_t, x_b, 3mf for geometry, dxf/dwg for drawings, or png/jpg/tif for a picture of the current graphics view. Writes next to the document when out is omitted. Only exports a copy: the open document keeps its own file.",
       parameters: {
         type: "object",
         properties: {
           format: {
             type: "string",
             description:
-              "Target format: pdf, step, stp, iges, igs, stl, dxf, dwg, x_t, x_b, 3mf, png, jpg, tif. Taken from out's extension when out is given and format is not.",
+              "Target format: pdf, step, stp, iges, igs, stl, dxf, dwg, x_t, x_b, 3mf, png, jpg, tif. Taken from out's extension when out is given and format is not. The out extension must name the format; a .SLDPRT/.SLDASM/.SLDDRW target is rejected.",
           },
           out: {
             type: "string",
@@ -575,7 +575,7 @@ export function apply(ctx, config = {}) {
     {
       name: "solidworks_save",
       description:
-        "Save an open SolidWorks document, save it under another name, or close it (or close all documents). Closing refuses to throw away unsaved changes unless force=true is passed; solidworks_save with action=save writes the current model.",
+        "Save an open SolidWorks document, save it under another name, or close it (or close all documents). action=save only works once the document has a file: a brand-new document must be written with action=save_as and out. save_as writes .SLDPRT/.SLDASM/.SLDDRW matching the document type (a missing extension is added); use solidworks_export for pdf/step/stl and other formats. Closing refuses to throw away unsaved changes unless force=true is passed.",
       parameters: {
         type: "object",
         properties: {
@@ -586,7 +586,11 @@ export function apply(ctx, config = {}) {
           },
           path: DOC_PATH,
           title: DOC_TITLE,
-          out: { type: "string", description: "Absolute target path for action=save_as." },
+          out: {
+            type: "string",
+            description:
+              "Target path for action=save_as. Must end in .SLDPRT, .SLDASM or .SLDDRW matching the document; a missing extension is added automatically. A relative path resolves against the document's folder, else Documents.",
+          },
           force: {
             type: "boolean",
             description: "Discard unsaved changes when closing (default false: refuse and report).",
@@ -608,6 +612,7 @@ export function apply(ctx, config = {}) {
     ctx.effect(() => ctx.tools.register(tool), `solidworks: tool ${tool.name}`);
   }
 }
+
 
 
 

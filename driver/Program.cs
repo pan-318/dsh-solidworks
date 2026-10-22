@@ -1,4 +1,4 @@
-// DSH SolidWorks driver: one stateless COM automation run per invocation.
+﻿// DSH SolidWorks driver: one stateless COM automation run per invocation.
 // Reads a JSON request, talks to the running (or freshly started) SolidWorks
 // through its early-bound interop API, and writes a JSON response.
 //
@@ -218,6 +218,76 @@ namespace DshSolidWorks
                 case ".slddrw": return 3;
                 default: throw new SwFailure("bad_request",
                     "Cannot tell the SolidWorks document type from '" + Path.GetFileName(path) + "'. Use a .sldprt, .sldasm or .slddrw path.");
+            }
+        }
+
+        /** The extension SolidWorks uses for a document type. */
+        static string NativeExtension(int type)
+        {
+            switch (type)
+            {
+                case 1: return ".SLDPRT";
+                case 2: return ".SLDASM";
+                case 3: return ".SLDDRW";
+                default: return "";
+            }
+        }
+
+        static bool IsNativeExtension(string path)
+        {
+            string ext = (Path.GetExtension(path) ?? "").ToLowerInvariant();
+            return ext == ".sldprt" || ext == ".sldasm" || ext == ".slddrw";
+        }
+
+        /** Makes an output path absolute: a relative path would otherwise resolve against the helper's own folder. */
+
+        /** Makes an output path absolute. A relative path resolves against the document's own folder,
+         *  then the user's Documents folder — never against the helper process directory. */
+        static string OutputPath(string path, ModelDoc2 doc)
+        {
+            if (string.IsNullOrEmpty(path)) return path;
+            if (Path.IsPathRooted(path)) return Path.GetFullPath(path);
+
+            string source = doc != null ? (doc.GetPathName() ?? "") : "";
+            string folder = string.IsNullOrEmpty(source) ? null : Path.GetDirectoryName(source);
+            if (string.IsNullOrEmpty(folder) || !Directory.Exists(folder))
+                folder = System.Environment.GetFolderPath(System.Environment.SpecialFolder.MyDocuments);
+            return Path.GetFullPath(Path.Combine(folder, path));
+        }
+
+        /** Strips the characters Windows does not allow in a file name. */
+        static string SafeFileName(string name)
+        {
+            if (string.IsNullOrEmpty(name)) return "document";
+            var builder = new System.Text.StringBuilder(name.Length);
+            char[] invalid = Path.GetInvalidFileNameChars();
+            foreach (char character in name)
+            {
+                bool bad = false;
+                foreach (char candidate in invalid)
+                    if (character == candidate) { bad = true; break; }
+                builder.Append(bad ? '-' : character);
+            }
+            string result = builder.ToString().Trim().TrimEnd('.');
+            return string.IsNullOrEmpty(result) ? "document" : result;
+        }
+
+        static string DescribeSaveError(int errors)
+        {
+            switch (errors)
+            {
+                case 0: return "the file could not be written";
+                case 1: return "SolidWorks reported a generic save error";
+                case 2: return "the document has never been saved and needs a file name (use action=save_as)";
+                case 4: return "the file name is empty";
+                case 16: return "the file is locked by another program";
+                case 32: return "that format is not available for this document";
+                case 128: return "the target file already exists and overwriting is not allowed";
+                case 256: return "SolidWorks does not accept that file type here";
+                case 2048: return "the path is too long";
+                case 4096: return "saving in that format is not supported for this document";
+                case 8192: return "the referenced files must be saved first";
+                default: return "save error " + errors;
             }
         }
 
@@ -959,6 +1029,21 @@ namespace DshSolidWorks
 
         static readonly string[] RasterFormats = { "bmp", "png", "jpg", "jpeg", "gif", "tif", "tiff" };
 
+        /** Maps the spellings users type onto the extension SolidWorks actually writes. */
+        static string NormalizeFormat(string format)
+        {
+            switch (format)
+            {
+                case "stp": return "step";
+                case "iges": return "igs";
+                case "jpeg": return "jpg";
+                case "tiff": return "tif";
+                case "x-b": return "x_b";
+                case "x-t": return "x_t";
+                default: return format;
+            }
+        }
+
         static bool IsRaster(string format)
         {
             foreach (string item in RasterFormats)
@@ -970,16 +1055,16 @@ namespace DshSolidWorks
         {
             ModelDoc2 model = ResolveDoc(true);
             string outPath = Str("out");
-            string format = (Str("format") ?? "").Trim().TrimStart('.').ToLowerInvariant();
+            string format = NormalizeFormat((Str("format") ?? "").Trim().TrimStart('.').ToLowerInvariant());
             if (string.IsNullOrEmpty(format) && !string.IsNullOrEmpty(outPath))
-                format = Path.GetExtension(outPath).TrimStart('.').ToLowerInvariant();
+                format = NormalizeFormat(Path.GetExtension(outPath).TrimStart('.').ToLowerInvariant());
             if (string.IsNullOrEmpty(format))
                 throw new SwFailure("bad_request", "Pass format (pdf, step, iges, stl, dxf, png, ...) or an out path with the extension.");
 
             if (IsRaster(format))
             {
                 if (string.IsNullOrEmpty(outPath)) outPath = DefaultOutPath(model, format);
-                outPath = Path.ChangeExtension(outPath, format);
+                outPath = OutputPath(Path.ChangeExtension(outPath, format), model);
                 int width = Int("width", 1600);
                 int height = Int("height", 1200);
                 CaptureRaster(model, outPath, format, width, height, Bool("zoomToFit", true));
@@ -993,18 +1078,45 @@ namespace DshSolidWorks
             }
 
             if (string.IsNullOrEmpty(outPath)) outPath = DefaultOutPath(model, format);
-            if (string.IsNullOrEmpty(Path.GetExtension(outPath))) outPath = outPath + "." + format;
-            string folder = Path.GetDirectoryName(Path.GetFullPath(outPath));
+            outPath = OutputPath(outPath, model);
+            string requestedExtension = (Path.GetExtension(outPath) ?? "").TrimStart('.');
+            if (string.IsNullOrEmpty(requestedExtension))
+            {
+                outPath = outPath + "." + format;
+            }
+            else if (!string.Equals(NormalizeFormat(requestedExtension.ToLowerInvariant()), format, StringComparison.OrdinalIgnoreCase))
+            {
+                // Saving a .SLDPRT/.SLDASM/.SLDDRW target through SaveAs changes the document itself
+                // instead of exporting a copy, so the extension must name the export format.
+                throw new SwFailure("extension_mismatch",
+                    "The out path ends in '." + requestedExtension + "' but the requested format is " + format.ToUpperInvariant() + ". " +
+                    "Use '." + format + "' for the out path, or leave format empty and let the extension decide.");
+            }
+            outPath = Path.ChangeExtension(outPath, "." + format);
+            string folder = Path.GetDirectoryName(outPath);
             if (!string.IsNullOrEmpty(folder)) Directory.CreateDirectory(folder);
 
             int errors = 0;
             int warnings = 0;
-            bool saved = model.Extension.SaveAs(outPath, 0, 1, null, ref errors, ref warnings);
+            // swSaveAsOptions_Copy keeps the open document on its own file instead of re-pointing it at the export.
+            int options = (int)swSaveAsOptions_e.swSaveAsOptions_Silent | (int)swSaveAsOptions_e.swSaveAsOptions_Copy;
+            bool saved = model.Extension.SaveAs(outPath, 0, options, null, ref errors, ref warnings);
             if (!File.Exists(outPath))
             {
+                string reason;
+                if (format == "dxf" || format == "dwg")
+                    reason = "DXF and DWG are drawing formats: open or create a drawing (solidworks_drawing) and export from there.";
+                else if (format == "pdf")
+                    reason = "Check that no other program holds the target file open.";
+                else if (model.GetType() == 1)
+                    reason = "Parts export as pdf, step, iges, stl, x_t, x_b, 3mf, or a picture.";
+                else if (model.GetType() == 2)
+                    reason = "Assemblies export as pdf, step, iges, stl, x_t, x_b, 3mf, or a picture.";
+                else
+                    reason = "Drawings export as pdf, dxf or dwg.";
                 throw new SwFailure("export_failed",
                     "SolidWorks could not export '" + Path.GetFileName(model.GetTitle()) + "' as " + format.ToUpperInvariant() +
-                    " (error " + errors + ", warning " + warnings + "). Use a format this document supports, such as pdf, step or iges for parts and assemblies, or dxf/dwg/pdf for drawings.");
+                    " (" + DescribeSaveError(errors) + "; error " + errors + ", warning " + warnings + "). " + reason);
             }
 
             return new Dictionary<string, object>
@@ -1026,7 +1138,7 @@ namespace DshSolidWorks
             }
             string folder = Path.Combine(System.Environment.GetFolderPath(System.Environment.SpecialFolder.LocalApplicationData), "dsh-solidworks", "exports");
             Directory.CreateDirectory(folder);
-            string name = (model.GetTitle() ?? "solidworks").Replace("/", "-").Replace("\\", "-").Replace(":", "-");
+            string name = SafeFileName(model.GetTitle() ?? "solidworks");
             return Path.Combine(folder, name + extension);
         }
 
@@ -1037,7 +1149,7 @@ namespace DshSolidWorks
             int height = Int("height", 900);
             string folder = Path.Combine(System.Environment.GetFolderPath(System.Environment.SpecialFolder.LocalApplicationData), "dsh-solidworks", "captures");
             Directory.CreateDirectory(folder);
-            string name = (model.GetTitle() ?? "solidworks").Replace("/", "-").Replace("\\", "-").Replace(":", "-");
+            string name = SafeFileName(model.GetTitle() ?? "solidworks");
             string outPath = Path.Combine(folder, name + "-" + DateTime.Now.ToString("yyyyMMdd-HHmmss-fff", CultureInfo.InvariantCulture) + ".png");
 
             CaptureRaster(model, outPath, "png", width, height, Bool("zoomToFit", true));
@@ -1132,22 +1244,57 @@ namespace DshSolidWorks
             {
                 case "save":
                 {
+                    // A document that has never been saved has no file name: Save3 fails with
+                    // swReadOnlySaveError (2). Tell the caller to use save_as instead of failing obscurely.
+                    string currentPath = doc.GetPathName() ?? "";
+                    if (string.IsNullOrEmpty(currentPath))
+                    {
+                        throw new SwFailure("no_file_name",
+                            "'" + title2 + "' has never been saved, so SolidWorks has no file name for it. " +
+                            "Use solidworks_save with action=save_as and out set to the target path (for example \"D:\\\\parts\\\\" +
+                            SafeFileName(title2) + NativeExtension(doc.GetType()) + "\").");
+                    }
                     // Save3 also runs when SolidWorks does not consider the document dirty:
                     // custom properties written through the API do not always raise that flag.
                     bool saved = doc.Save3((int)swSaveAsOptions_e.swSaveAsOptions_Silent, ref errors, ref warnings);
                     if (!saved)
-                        throw new SwFailure("save_failed", "SolidWorks could not save '" + title2 + "' (error " + errors + ", warning " + warnings + ").");
+                        throw new SwFailure("save_failed",
+                            "SolidWorks could not save '" + title2 + "': " + DescribeSaveError(errors) + " (error " + errors + ", warning " + warnings + ").");
                     return new Dictionary<string, object> { { "action", "save" }, { "doc", DocInfo(doc, app.ActiveDoc as ModelDoc2) }, { "saved", true }, { "path", doc.GetPathName() ?? "" } };
                 }
                 case "save_as":
                 {
                     string target = Str("out");
                     if (string.IsNullOrEmpty(target)) throw new SwFailure("bad_request", "Pass out with the file name to save as.");
-                    string folder = Path.GetDirectoryName(Path.GetFullPath(target));
+                    target = OutputPath(target, doc);
+                    string extension = (Path.GetExtension(target) ?? "").ToLowerInvariant();
+                    if (string.IsNullOrEmpty(extension))
+                    {
+                        // SolidWorks refuses to save without an extension; add the document's own.
+                        target = target + NativeExtension(doc.GetType());
+                    }
+                    else if (!IsNativeExtension(target))
+                    {
+                        throw new SwFailure("bad_extension",
+                            "'" + Path.GetFileName(target) + "' is not a SolidWorks file extension. " +
+                            "save_as only writes .SLDPRT, .SLDASM or .SLDDRW; to export another format use solidworks_export " +
+                            "(pdf, step, stl, dxf, ...).");
+                    }
+                    int docType = doc.GetType();
+                    int expected = docType == 1 ? 1 : docType == 2 ? 2 : 3;
+                    if (TypeOfPath(target) != expected)
+                    {
+                        throw new SwFailure("type_mismatch",
+                            "'" + Path.GetFileName(target) + "' does not match this document: it is a " + TypeName(docType) +
+                            " and needs " + NativeExtension(docType) + ". Use solidworks_export to write another format.");
+                    }
+                    string folder = Path.GetDirectoryName(target);
                     if (!string.IsNullOrEmpty(folder)) Directory.CreateDirectory(folder);
                     bool saved = doc.Extension.SaveAs(target, 0, 1, null, ref errors, ref warnings);
                     if (!File.Exists(target))
-                        throw new SwFailure("save_failed", "Could not save '" + title2 + "' to '" + target + "' (error " + errors + ").");
+                        throw new SwFailure("save_failed",
+                            "Could not save '" + title2 + "' to '" + target + "': " + DescribeSaveError(errors) +
+                            " (error " + errors + ").");
                     return new Dictionary<string, object> { { "action", "save_as" }, { "doc", DocInfo(doc, app.ActiveDoc as ModelDoc2) }, { "saved", saved }, { "path", target } };
                 }
                 case "close":
@@ -1273,7 +1420,7 @@ namespace DshSolidWorks
                 {
                     string folder = Path.Combine(System.Environment.GetFolderPath(System.Environment.SpecialFolder.LocalApplicationData), "dsh-solidworks", "captures");
                     Directory.CreateDirectory(folder);
-                    string name = (doc.GetTitle() ?? "solidworks").Replace("/", "-").Replace("\\", "-").Replace(":", "-");
+                    string name = SafeFileName(doc.GetTitle() ?? "solidworks");
                     string outPath = Path.Combine(folder, name + "-model-" + DateTime.Now.ToString("yyyyMMdd-HHmmss-fff", CultureInfo.InvariantCulture) + ".png");
                     CaptureClean(doc, outPath, 1400, 900);
                     data["previewPng"] = outPath;
@@ -1947,7 +2094,7 @@ namespace DshSolidWorks
                 {
                     string folder = Path.Combine(System.Environment.GetFolderPath(System.Environment.SpecialFolder.LocalApplicationData), "dsh-solidworks", "captures");
                     Directory.CreateDirectory(folder);
-                    string name = (doc.GetTitle() ?? "assembly").Replace("/", "-").Replace("\\", "-").Replace(":", "-");
+                    string name = SafeFileName(doc.GetTitle() ?? "assembly");
                     string outPath = Path.Combine(folder, name + "-assembly-" + DateTime.Now.ToString("yyyyMMdd-HHmmss-fff", CultureInfo.InvariantCulture) + ".png");
                     CaptureClean(doc, outPath, 1400, 900);
                     data["previewPng"] = outPath;
@@ -2408,6 +2555,12 @@ namespace DshSolidWorks
         }
     }
 }
+
+
+
+
+
+
 
 
 
