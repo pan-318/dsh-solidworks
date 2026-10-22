@@ -1,0 +1,48 @@
+{
+    "name":  "@local/dsh-solidworks",
+    "version":  "0.3.0",
+    "private":  true,
+    "type":  "module",
+    "description":  "SolidWorks for DeepSeek Harness: model parts, build assemblies, create drawings, inspect, export and photograph SOLIDWORKS documents from the chat.",
+    "keywords":  [
+                     "deepseek",
+                     "deepseek-harness",
+                     "dsh",
+                     "dsh-plugin",
+                     "solidworks",
+                     "cad",
+                     "com-automation",
+                     "windows"
+                 ],
+    "os":  [
+               "win32"
+           ],
+    "exports":  {
+                    ".":  "./index.js",
+                    "./locale/*.json":  "./locale/*.json",
+                    "./icon":  "./icon.svg",
+                    "./package.json":  "./package.json"
+                },
+    "files":  [
+                  "index.js",
+                  "lib/*.js",
+                  "driver/Program.cs",
+                  "cordis.patch.yml",
+                  "locale/*.json",
+                  "icon.svg",
+                  "README.md"
+              ],
+    "peerDependencies":  {
+                             "@deepseek-ai/schemastery":  "\u003e=3.18.0 \u003c4"
+                         },
+    "peerDependenciesMeta":  {
+                                 "@deepseek-ai/schemastery":  {
+                                                                  "optional":  true
+                                                              }
+                             },
+    "dsh":  {
+                "bundle":  {
+                               "patch":  "./cordis.patch.yml"
+                           }
+            }
+}

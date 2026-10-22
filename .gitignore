@@ -1,0 +1,17 @@
+# Generated caches and local artefacts
+node_modules/
+dist/
+build/
+*.log
+.DS_Store
+Thumbs.db
+.vscode/
+.idea/
+
+# Local SolidWorks files and plugin working data
+*.SLDPRT
+*.SLDASM
+*.SLDDRW
+*.SLDDRW
+backups/
+captures/
