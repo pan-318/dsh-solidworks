@@ -104,6 +104,16 @@
 - **导出其它格式请用 `solidworks_export`**：它总是写副本（`swSaveAsOptions_Copy`），不会把打开的文档改成导出文件；`format` 与 `out` 扩展名不一致会被拒绝，避免 SolidWorks 把零件“另存成” `.SLDPRT` 而改掉文档路径。
 - 相对路径按**文档所在目录**解析；文档还没保存时按“文档”文件夹解析，不会落到插件源码目录。
 
+## 无界面运行
+
+默认 `visible: false`，SolidWorks 在后台运行，不会弹出窗口：
+
+- 建模、检查、装配、工程图、导出、保存都不需要窗口，全部可用。
+- **截图和 PNG 导出也照常工作** —— SolidWorks 仍然在内存里渲染图形区，只是窗口不显示。
+- 打开文档时 SolidWorks 会自己把窗口弹出来，插件在每次操作结束时会重新隐藏，所以你不会看到它一闪而过。
+- 冷启动时进程以隐藏方式启动，连启动画面都不出现。
+- 想看着它操作，把配置改成 `visible: true` 即可，两种模式随时切换。
+
 ## 安全设计
 
 - 零件、装配体、工程图都可以操作；**只读文档拒绝改动**。
@@ -115,7 +125,7 @@
 
 | 字段 | 默认 | 说明 |
 | --- | --- | --- |
-| `visible` | `true` | 显示 SolidWorks 窗口 |
+| `visible` | `false` | 是否显示 SolidWorks 窗口；默认**无界面后台运行** |
 | `autoLaunch` | `true` | 需要时自动启动 SolidWorks（首次约 30 秒） |
 | `timeoutSec` | `180` | 单次自动化操作最长等待时间 |
 | `captureWidth` / `captureHeight` | `1400` / `900` | 截图尺寸 |
@@ -128,7 +138,7 @@
 - id: dsh-solidworks
   name: '@local/dsh-solidworks'
   config:
-    visible: true
+    visible: false        # 默认无界面；改成 true 才显示窗口
     autoLaunch: true
     timeoutSec: 300
 ```
@@ -139,7 +149,8 @@
 
 ## 限制
 
-- 只支持 Windows；SolidWorks 本身没有无界面模式，脚本运行时会打开真实窗口。
+- 只支持 Windows。
+- SolidWorks 没有真正的无界面内核：后台模式仍然启动 SLDWORKS.exe 进程，只是把窗口隐藏起来（`ShowWindow`）。因此任务管理器里能看到它，内存占用也和正常打开时一样；截图和 PNG 导出依赖图形窗口，所以不能用纯服务方式运行。
 - 装配配合基于零件基准面（平面），不支持面/边/轴/点之间的任意配合，也不支持运动算例。
 - 工程图只生成标准视图和模型尺寸，不包含剖面图、局部放大图、尺寸公差、BOM 表。
 - 不支持钣金、焊件、模具、曲面编辑（曲面只支持拉伸）。
@@ -151,6 +162,7 @@
 - SOLIDWORKS 是 Dassault Systèmes SolidWorks Corporation 的商标。本项目是**非官方**社区项目，与 Dassault Systèmes 无任何关联，也未获其背书。
 - 插件通过公开的 COM API 操作你本机已安装并获授权的 SolidWorks；使用前请确认你的 SolidWorks 许可允许这种自动化方式。
 - 自动化会修改打开的文档。插件默认不保存，修改已保存文件前会先备份，但仍建议在重要数据上先手动备份并自行承担使用风险。
+
 
 
 

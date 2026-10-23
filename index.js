@@ -13,11 +13,11 @@ const en = (text) => ({ "en-US": { $description: text } });
 export const Config = z.object({
   visible: z
     .boolean()
-    .default(true)
+    .default(false)
     .volatile()
     .i18n({
-      ...zh("把 SolidWorks 窗口显示出来，方便你同时操作"),
-      ...en("Show the SolidWorks window so the user can watch and edit alongside"),
+      ...zh("显示 SolidWorks 窗口；默认关闭，在后台无界面运行（建模、导出、截图都不受影响）"),
+      ...en("Show the SolidWorks window; off by default, so it runs in the background with no window (modeling, exports and captures still work)"),
     }),
   autoLaunch: z
     .boolean()
@@ -145,7 +145,7 @@ const DOC_TITLE = {
 
 export function apply(ctx, config = {}) {
   const settings = {
-    visible: typeof config.visible === "boolean" ? config.visible : true,
+    visible: typeof config.visible === "boolean" ? config.visible : false,
     autoLaunch: typeof config.autoLaunch === "boolean" ? config.autoLaunch : true,
     timeoutSec: Number.isFinite(config.timeoutSec) && config.timeoutSec > 0 ? config.timeoutSec : 180,
     captureWidth: Number.isFinite(config.captureWidth) && config.captureWidth > 0 ? config.captureWidth : 1400,
@@ -517,7 +517,7 @@ export function apply(ctx, config = {}) {
     {
       name: "solidworks_export",
       description:
-        "Export an open SolidWorks document to a file: pdf, step/stp, iges/igs, stl, x_t, x_b, 3mf for geometry, dxf/dwg for drawings, or png/jpg/tif for a picture of the current graphics view. Writes next to the document when out is omitted. Only exports a copy: the open document keeps its own file.",
+        "Export an open SolidWorks document to a file: pdf, step/stp, iges/igs, stl, x_t, x_b, 3mf for geometry, dxf/dwg for drawings, or png/jpg/tif for a picture of the current graphics view. Writes next to the document when out is omitted. Only exports a copy: the open document keeps its own file. Runs in the background with no window.",
       parameters: {
         type: "object",
         properties: {
@@ -548,7 +548,7 @@ export function apply(ctx, config = {}) {
     {
       name: "solidworks_capture",
       description:
-        "Take a picture of the current SolidWorks graphics area and show it to you, so you can check what the model really looks like (shape, orientation, colours, whether a feature landed where it should). The picture is attached to the tool result; the user sees it too.",
+        "Take a picture of the current SolidWorks graphics area and show it to you, so you can check what the model really looks like (shape, orientation, colours, whether a feature landed where it should). The picture is attached to the tool result; the user sees it too. Works in the default headless mode: SolidWorks renders off screen, so no window is needed.",
       parameters: {
         type: "object",
         properties: {
@@ -625,3 +625,5 @@ export function apply(ctx, config = {}) {
     ctx.effect(() => ctx.tools.register(tool), `solidworks: tool ${tool.name}`);
   }
 }
+
+

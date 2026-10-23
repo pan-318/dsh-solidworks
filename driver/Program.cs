@@ -30,6 +30,71 @@ namespace DshSolidWorks
         }
     }
 
+    /// <summary>
+    /// Shows or hides the SolidWorks main window.
+    /// ISldWorks.Visible = false does not hide the frame on SolidWorks 2019, and opening a
+    /// document brings the window back, so the frame is driven through ShowWindow instead.
+    /// </summary>
+    static class WindowState
+    {
+        const int SW_HIDE = 0;
+        const int SW_SHOW = 5;
+
+        [System.Runtime.InteropServices.DllImport("user32.dll")]
+        static extern bool EnumWindows(EnumWindowsProc callback, IntPtr extra);
+
+        delegate bool EnumWindowsProc(IntPtr window, IntPtr extra);
+
+        [System.Runtime.InteropServices.DllImport("user32.dll")]
+        static extern uint GetWindowThreadProcessId(IntPtr window, out uint processId);
+
+        [System.Runtime.InteropServices.DllImport("user32.dll")]
+        static extern bool IsWindowVisible(IntPtr window);
+
+        [System.Runtime.InteropServices.DllImport("user32.dll")]
+        static extern bool ShowWindow(IntPtr window, int command);
+
+        [System.Runtime.InteropServices.DllImport("user32.dll")]
+        static extern int GetWindowTextLength(IntPtr window);
+
+        /** Applies the requested state to every titled top-level window of the SolidWorks process. */
+        public static void Apply(bool visible)
+        {
+            int wanted = visible ? SW_SHOW : SW_HIDE;
+            foreach (IntPtr window in SolidWorksWindows())
+            {
+                bool shown = IsWindowVisible(window);
+                if (visible ? shown : !shown) continue;
+                ShowWindow(window, wanted);
+            }
+        }
+
+        static List<IntPtr> SolidWorksWindows()
+        {
+            var found = new List<IntPtr>();
+            var ids = new List<uint>();
+            foreach (Process process in Process.GetProcessesByName("SLDWORKS"))
+            {
+                try { ids.Add((uint)process.Id); }
+                catch { }
+                finally { process.Dispose(); }
+            }
+            if (ids.Count == 0) return found;
+
+            EnumWindows(delegate(IntPtr window, IntPtr extra)
+            {
+                uint owner;
+                if (GetWindowThreadProcessId(window, out owner) == 0) return true;
+                if (!ids.Contains(owner)) return true;
+                // Skip the invisible helper windows SolidWorks keeps around.
+                if (GetWindowTextLength(window) == 0) return true;
+                found.Add(window);
+                return true;
+            }, IntPtr.Zero);
+            return found;
+        }
+    }
+
     static class Program
     {
         static readonly JavaScriptSerializer Json = new JavaScriptSerializer
@@ -77,6 +142,9 @@ namespace DshSolidWorks
                     if (sw != null) sw.CommandInProgress = false;
                 }
                 catch { }
+                // SolidWorks 2019 re-shows its main window whenever a document opens, and
+                // ISldWorks.Visible=false does not hide it, so put it back to the requested state.
+                try { WindowState.Apply(Bool("visible", true)); } catch { }
             }
 
             try
@@ -381,13 +449,18 @@ namespace DshSolidWorks
                 }
                 try
                 {
-                    Process.Start(new ProcessStartInfo(exe) { UseShellExecute = true });
+                    ProcessStartInfo start = new ProcessStartInfo(exe) { UseShellExecute = true };
+                    // Starting hidden keeps the splash and the main frame off screen; the COM
+                    // server still initialises normally.
+                    if (!Visible()) start.WindowStyle = ProcessWindowStyle.Hidden;
+                    Process.Start(start);
                 }
                 catch (Exception ex)
                 {
                     throw new SwFailure("launch_failed", "Could not start SolidWorks: " + Describe(ex));
                 }
                 Thread.Sleep(2500);
+                if (!Visible()) { try { WindowState.Apply(false); } catch { } }
             }
 
             int deadline = System.Environment.TickCount + WaitSeconds() * 1000;
@@ -400,6 +473,7 @@ namespace DshSolidWorks
                     ISldWorks candidate = (ISldWorks)application;
                     candidate.RevisionNumber();
                     try { candidate.Visible = Visible(); } catch { }
+                    if (!Visible()) { try { WindowState.Apply(false); } catch { } }
                     sw = candidate;
                     return sw;
                 }
@@ -2399,20 +2473,32 @@ namespace DshSolidWorks
             };
 
             var created = new List<object>();
-            foreach (string view in wantedNames)
+            // Creating projected views needs a real window: with the frame hidden SolidWorks
+            // returns null from CreateDrawViewFromModelView3. Show it for this operation only,
+            // then put it back.
+            bool wasHidden = !Visible();
+            if (wasHidden) { try { WindowState.Apply(true); } catch { } }
+            try
             {
-                double[] position = positions[view];
-                View createdView = null;
-                foreach (string candidate in DrawingViewNames(view))
+                foreach (string view in wantedNames)
                 {
-                    createdView = drawing.CreateDrawViewFromModelView3(modelPath, candidate, sheetWidth * position[0], sheetHeight * position[1], 0);
-                    if (createdView != null) break;
+                    double[] position = positions[view];
+                    View createdView = null;
+                    foreach (string candidate in DrawingViewNames(view))
+                    {
+                        createdView = drawing.CreateDrawViewFromModelView3(modelPath, candidate, sheetWidth * position[0], sheetHeight * position[1], 0);
+                        if (createdView != null) break;
+                    }
+                    if (createdView == null)
+                        throw new SwFailure("view_failed",
+                            "SolidWorks could not create the '" + view + "' view of '" + Path.GetFileName(modelPath) + "'. " +
+                            "Check that the file opens in this SolidWorks version.");
+                    created.Add(new Dictionary<string, object> { { "name", createdView.GetName2() }, { "view", view } });
                 }
-                if (createdView == null)
-                    throw new SwFailure("view_failed",
-                        "SolidWorks could not create the '" + view + "' view of '" + Path.GetFileName(modelPath) + "'. " +
-                        "Check that the file opens in this SolidWorks version.");
-                created.Add(new Dictionary<string, object> { { "name", createdView.GetName2() }, { "view", view } });
+            }
+            finally
+            {
+                if (wasHidden) { try { WindowState.Apply(false); } catch { } }
             }
 
             var notes = new List<string>();
