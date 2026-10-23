@@ -1,4 +1,5 @@
-- insert:
+﻿- insert:
     - id: dsh-solidworks
-      name: '@local/dsh-solidworks'
+      name: '@pan-318/dsh-solidworks'
       config: {}
+

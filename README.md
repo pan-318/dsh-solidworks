@@ -4,13 +4,21 @@
 
 让 DeepSeek Harness 直接操作本机真实的 **SOLIDWORKS**：零件建模、装配体插入与配合、工程图生成，以及打开、检查、导出、自定义属性和截图。
 
-## 安装（给其他用户）
+## 安装
+
+从 npm 安装（推荐）：
+
+```
+@pan-318/dsh-solidworks
+```
+
+在 DeepSeek Harness 里让 Agent 执行 `plugin_manager` 的 `install_bundle`，`target` 填 `@pan-318/dsh-solidworks`。
+
+也可以从源码安装：
 
 1. 克隆仓库，得到包含 `package.json` 的插件目录。
-2. 在 DeepSeek Harness 里让 Agent 执行 `plugin_manager` 的 `install_bundle`，`target` 指向该目录的**绝对路径**。
+2. `install_bundle` 的 `target` 指向该目录的**绝对路径**。
 3. 重启或刷新会话后即可使用 `solidworks_*` 工具。
-
-> 仓库里的包名 `@local/dsh-solidworks` 是开发期的本地占位名；如果你要发布到 npm，请改成自己的 scope，并去掉 `package.json` 里的 `"private": true`。
 
 
 ## 环境要求
@@ -136,7 +144,7 @@
 
 ```yaml
 - id: dsh-solidworks
-  name: '@local/dsh-solidworks'
+  name: '@pan-318/dsh-solidworks'
   config:
     visible: false        # 默认无界面；改成 true 才显示窗口
     autoLaunch: true
@@ -162,6 +170,7 @@
 - SOLIDWORKS 是 Dassault Systèmes SolidWorks Corporation 的商标。本项目是**非官方**社区项目，与 Dassault Systèmes 无任何关联，也未获其背书。
 - 插件通过公开的 COM API 操作你本机已安装并获授权的 SolidWorks；使用前请确认你的 SolidWorks 许可允许这种自动化方式。
 - 自动化会修改打开的文档。插件默认不保存，修改已保存文件前会先备份，但仍建议在重要数据上先手动备份并自行承担使用风险。
+
 
 
 
